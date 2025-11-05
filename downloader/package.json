@@ -1,0 +1,16 @@
+{
+  "name": "tp-25",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "listr2": "^9.0.5",
+    "octokit": "^5.0.4"
+  }
+}
