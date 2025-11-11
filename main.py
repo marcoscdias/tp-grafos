@@ -6,8 +6,15 @@ repo = ""
 def main():
     global repo
 
-    print("Qual o repositorio?")
+    info("Qual o repositorio?")
     repo = input()
+
+    while repo == "":
+        error("Favor fornecer o repositorio!")
+        info("Qual o repositorio?")
+        repo = input()
+
+    print()
 
     project_files = Path("downloader/downloads/{}".format(repo))
     if not project_files.exists():
@@ -35,6 +42,9 @@ def warn(msg):
 
 def error(msg):
     print("\033[91m{}\033[0m".format(msg))
+
+def TODO():
+    raise "TODO: Implement method"
 
 if __name__ == '__main__':
     main()
