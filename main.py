@@ -1,4 +1,4 @@
-import json
+import json, sys
 from pathlib import Path
 
 repo = ""
@@ -6,15 +6,18 @@ repo = ""
 def main():
     global repo
 
-    info("Qual o repositorio?")
-    repo = input()
-
-    while repo == "":
-        error("Favor fornecer o repositorio!")
+    if len(sys.argv) > 1:
+        repo = sys.argv[1]
+    else:
         info("Qual o repositorio?")
         repo = input()
 
-    print()
+        while repo == "":
+            error("Favor fornecer o repositorio!")
+            info("Qual o repositorio?")
+            repo = input()
+
+        print()
 
     project_files = Path("downloader/downloads/{}".format(repo))
     if not project_files.exists():
@@ -31,6 +34,7 @@ def main():
 
 
 def read(file):
+    info("Lendo {}/{}.json".format(repo, file))
     with open("downloader/downloads/{}/{}.json".format(repo, file), 'r') as file_content:
         return json.load(file_content)
 
