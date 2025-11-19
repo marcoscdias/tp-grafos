@@ -3,6 +3,7 @@ from pathlib import Path
 
 repo = ""
 
+
 def main():
     global repo
 
@@ -40,17 +41,22 @@ def read(file):
     with open("downloader/downloads/{}/{}.json".format(repo, file), 'r') as file_content:
         return json.load(file_content)
 
+
 def info(msg):
     print(msg)
+
 
 def warn(msg):
     print("\033[93m{}\033[0m".format(msg))
 
+
 def error(msg):
     print("\033[91m{}\033[0m".format(msg))
 
+
 def TODO():
     raise "TODO: Implement method"
+
 
 if __name__ == '__main__':
     main()
