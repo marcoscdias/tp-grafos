@@ -10,6 +10,7 @@
     "typescript": "^5"
   },
   "dependencies": {
+    "@octokit/plugin-throttling": "^11.0.3",
     "listr2": "^9.0.5",
     "octokit": "^5.0.4"
   }
