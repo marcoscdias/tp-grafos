@@ -26,10 +26,12 @@ def main():
         return
 
     # O formato do JSON segue a resposta da API
-    # issues - https://docs.github.com/en/rest/issues/issues?apiVersion=2022-11-28#list-repository-issues
+    # issues          - https://docs.github.com/en/rest/issues/issues?apiVersion=2022-11-28#list-repository-issues
     # issues_comments - https://docs.github.com/en/rest/issues/comments?apiVersion=2022-11-28#list-issue-comments-for-a-repository
-    # pulls - https://docs.github.com/en/rest/pulls/pulls?apiVersion=2022-11-28#list-pull-requests
-    # pulls_comments - https://docs.github.com/en/rest/pulls/comments?apiVersion=2022-11-28#list-review-comments-in-a-repository
+    # pulls           - https://docs.github.com/en/rest/pulls/pulls?apiVersion=2022-11-28#list-pull-requests
+    # pulls_comments  - https://docs.github.com/en/rest/pulls/comments?apiVersion=2022-11-28#list-review-comments-in-a-repository
+    # pulls_reviews   - Root is a JSON Object with each element being on the format where the key is the PR number,
+    #                   and the value is the API result https://docs.github.com/en/rest/pulls/reviews?apiVersion=2022-11-28#list-reviews-for-a-pull-request
     issues = read("issues")
 
 
