@@ -1,6 +1,12 @@
 from abc import ABC, abstractmethod
 
 
+# A node represents a user, and should hold important user details
+class Node:
+    def __init__(self, node_id: int, name: str):
+        self.id = node_id
+        self.name = name
+
 class AbstractGraph(ABC):
     @abstractmethod
     def getVertexCount(self, ) -> int:
