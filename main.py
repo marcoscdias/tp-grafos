@@ -38,7 +38,7 @@ def main():
 
 def read(file):
     info("Lendo {}/{}.json".format(repo, file))
-    with open("downloader/downloads/{}/{}.json".format(repo, file), 'r') as file_content:
+    with open("downloader/downloads/{}/{}.json".format(repo, file), 'r', encoding='utf-8') as file_content:
         return json.load(file_content)
 
 
