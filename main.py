@@ -1,6 +1,10 @@
 import json
 import sys
 from pathlib import Path
+from typing import TypeVar, Type
+
+from data_format import Issue, IssueComment, PullComment
+from dacite import from_dict
 
 from list_graph import AdjacencyListGraph
 
@@ -15,15 +19,17 @@ para visualização no Gephi.
 
 repo = ""
 
+
 class UserMapper:
     """
-    Classe utilitária responsável pelo mapeamento bidirecional entre identificadores 
+    Classe utilitária responsável pelo mapeamento bidirecional entre identificadores
     de usuários (strings/login do GitHub) e índices numéricos (inteiros).
 
-    Necessária pois a implementação do Grafo (AdjacencyListGraph) opera sobre 
-    índices inteiros para otimização de memória, enquanto os dados brutos utilizam 
+    Necessária pois a implementação do Grafo (AdjacencyListGraph) opera sobre
+    índices inteiros para otimização de memória, enquanto os dados brutos utilizam
     strings.
     """
+
     def __init__(self):
         self.user_to_id = {}
         self.id_to_user = {}
@@ -31,7 +37,7 @@ class UserMapper:
 
     def get_id(self, username: str) -> int:
         """
-        Recupera o ID numérico de um usuário. Se o usuário não existir, 
+        Recupera o ID numérico de um usuário. Se o usuário não existir,
         gera um novo ID incremental e o registra.
         """
         if username not in self.user_to_id:
@@ -49,10 +55,11 @@ class UserMapper:
         return self.counter
 
 
+# noinspection DuplicatedCode
 def main():
     """
     Função de entrada principal (Entry Point).
-    
+
     Executa o pipeline de processamento:
     1. Validação de entrada e arquivos.
     2. Carregamento de dados JSON (Issues, PRs, Comentários).
@@ -83,11 +90,11 @@ def main():
 
     # 3. Carregamento dos artefatos (JSONs)
     try:
-        issues = read("issues")
-        issue_comments = read("issues_comments") 
-        pulls = read("pulls")
-        pulls_comments = read("pulls_comments") # Comentários inline em código
-        pulls_reviews = read("pulls_reviews")
+        issues: list[Issue] = process_list(Issue, read("issues"))
+        issue_comments: list[IssueComment] = process_list(IssueComment, read("issues_comments"))
+        # pulls: list = read("pulls")
+        pulls_comments: list[PullComment] = process_list(PullComment, read("pulls_comments"))
+        pulls_reviews: dict[str, list[PullComment]] = process_dict(PullComment, read("pulls_reviews"))
     except FileNotFoundError as e:
         error(f"Arquivo crítico faltando: {e}")
         return
@@ -95,39 +102,39 @@ def main():
     # 4. Pré-processamento e Indexação
     info("Indexando autores de Issues e PRs...")
     user_mapper = UserMapper()
-    
+
     # Mapeia Autores de Issues (Necessário para identificar o alvo dos comentários)
-    issue_authors = {} 
+    issue_authors = {}
     for issue in issues:
-        user = issue.get('user')
-        if user:
-            u_id = user_mapper.get_id(user['login'])
-            issue_authors[issue['number']] = u_id
+        user = issue.user
+        if user is not None:
+            u_id = user_mapper.get_id(user.login)
+            issue_authors[issue.number] = u_id
 
     # Mapeia Autores de PRs
-    pr_authors = {}
-    for pr in pulls:
-        user = pr.get('user')
-        if user:
-            u_id = user_mapper.get_id(user['login'])
-            pr_authors[pr['number']] = u_id
+    # pr_authors = {}
+    # for pr in pulls:
+    #     user = pr.user
+    #     if user:
+    #         u_id = user_mapper.get_id(user['login'])
+    #         pr_authors[pr['number']] = u_id
 
     # Varredura completa para registro de todos os nós (Vértices) antes da criação do grafo
     info("Mapeando espaço de usuários...")
-    
+
     for c in issue_comments:
-        if c.get('user'): user_mapper.get_id(c['user']['login'])
-            
+        if c.user is not None: user_mapper.get_id(c.user.login)
+
     for c in pulls_comments:
-        if c.get('user'): user_mapper.get_id(c['user']['login'])
+        if c.user is not None: user_mapper.get_id(c.user.login)
 
     for pr_num, reviews in pulls_reviews.items():
         for r in reviews:
-            if r.get('user'): user_mapper.get_id(r['user']['login'])
-            
-    for pr in pulls:
-        if pr.get('merged_by'):
-            user_mapper.get_id(pr['merged_by']['login'])
+            if r.user is not None: user_mapper.get_id(r.user.login)
+
+    # for pr in pulls:
+    #     if pr.get('merged_by'):
+    #         user_mapper.get_id(pr['merged_by']['login'])
 
     num_users = user_mapper.count()
     info(f"Total de usuários únicos (Vértices): {num_users}")
@@ -142,40 +149,42 @@ def main():
     # Regra de Negócio: Comentários denotam interação leve (Peso 2.0)
     count_comments = 0
     for comment in issue_comments:
-        user_obj = comment.get('user')
-        if not user_obj: continue
-        
-        commenter_id = user_mapper.get_id(user_obj['login'])
-        issue_url = comment.get('issue_url', '')
-        
+        user_obj = comment.user
+        if user_obj is None: continue
+
+        commenter_id = user_mapper.get_id(user_obj.login)
+        issue_url = comment.issue_url
+
         try:
             issue_number = int(issue_url.split('/')[-1])
-        except:
+        except ValueError:
+            warn(f"Falha ao processar comentário de issue para [{issue_url.split('/')[-1]}] {issue_url}")
             continue
 
         if issue_number in issue_authors:
             author_id = issue_authors[issue_number]
             # Previne auto-loops (usuário comentando na própria issue)
-            if commenter_id != author_id: 
+            if commenter_id != author_id:
                 add_interaction(graph, commenter_id, author_id, 2.0)
                 count_comments += 1
 
     # --- B: Processamento de Comentários em Pull Requests ---
     # Regra de Negócio: Comentários de código também possuem Peso 2.0
     for comment in pulls_comments:
-        user_obj = comment.get('user')
-        if not user_obj: continue
-        
-        commenter_id = user_mapper.get_id(user_obj['login'])
-        pr_url = comment.get('pull_request_url', '')
-        
+        user_obj = comment.user
+        if user_obj is None: continue
+
+        commenter_id = user_mapper.get_id(user_obj.login)
+        pr_url = comment.pull_request_url
+
         try:
             pr_number = int(pr_url.split('/')[-1])
-        except:
+        except ValueError:
+            warn(f"Falha ao processar comentário de review para [{pr_url.split('/')[-1]}] {pr_url}")
             continue
 
-        if pr_number in pr_authors:
-            author_id = pr_authors[pr_number]
+        if pr_number in issue_authors:
+            author_id = issue_authors[pr_number]
             if commenter_id != author_id:
                 add_interaction(graph, commenter_id, author_id, 2.0)
                 count_comments += 1
@@ -185,16 +194,16 @@ def main():
     count_reviews = 0
     for pr_num_str, reviews in pulls_reviews.items():
         pr_number = int(pr_num_str)
-        
-        if pr_number not in pr_authors: continue
-        author_id = pr_authors[pr_number]
+
+        if pr_number not in issue_authors: continue
+        author_id = issue_authors[pr_number]
 
         for review in reviews:
-            user_obj = review.get('user')
-            if not user_obj: continue
-            
-            reviewer_id = user_mapper.get_id(user_obj['login'])
-            
+            user_obj = review.user
+            if user_obj is None: continue
+
+            reviewer_id = user_mapper.get_id(user_obj.login)
+
             if reviewer_id != author_id:
                 add_interaction(graph, reviewer_id, author_id, 4.0)
                 count_reviews += 1
@@ -202,11 +211,11 @@ def main():
     # --- D: Processamento de Merges ---
     # Regra de Negócio: Merges representam a consolidação da colaboração (Peso 5.0)
     count_merges = 0
-    for pr in pulls:
-        if pr.get('merged_at') and pr.get('merged_by'):
-            merger_id = user_mapper.get_id(pr['merged_by']['login'])
-            author_id = pr_authors.get(pr['number'])
-            
+    for pr in issues:
+        if pr.pull_request and pr.pull_request.merged_at and pr.closed_by:
+            merger_id = user_mapper.get_id(pr.closed_by.login)
+            author_id = issue_authors.get(pr.number)
+
             if author_id is not None and merger_id != author_id:
                 add_interaction(graph, merger_id, author_id, 5.0)
                 count_merges += 1
@@ -224,19 +233,19 @@ def main():
     # 6. Exportação dos Dados
     output_file = f"{repo.replace('/', '_')}.gdf"
     info(f"Exportando para formato GDF: {output_file}...")
-    
+
     export_custom_gephi(graph, user_mapper, output_file)
-    
+
     info("Pipeline finalizado com sucesso.")
 
 
 def add_interaction(graph, u: int, v: int, weight: float):
     """
     Registra uma interação entre dois usuários no grafo.
-    
-    Implementa a lógica de Grafo Integrado: se a aresta já existe 
+
+    Implementa a lógica de Grafo Integrado: se a aresta já existe
     (interação prévia), o novo peso é somado ao atual.
-    
+
     Args:
         graph: Instância de AbstractGraph.
         u: ID do usuário de origem.
@@ -254,18 +263,18 @@ def add_interaction(graph, u: int, v: int, weight: float):
 def export_custom_gephi(graph, mapper, path):
     """
     Exporta a estrutura do grafo para o formato GDF (Guess Definition File).
-    
-    Realiza a tradução reversa de IDs numéricos para Logins do GitHub 
+
+    Realiza a tradução reversa de IDs numéricos para Logins do GitHub
     para permitir a análise visual legível no software Gephi.
     """
     with open(path, 'w', encoding='utf-8') as f:
         f.write("nodedef>name VARCHAR,label VARCHAR\n")
         num_v = graph.getVertexCount()
-        
+
         for i in range(num_v):
             login = mapper.get_name(i)
             f.write(f"{login},{login}\n")
-        
+
         f.write("edgedef>node1 VARCHAR,node2 VARCHAR,weight DOUBLE,directed BOOLEAN\n")
         for u in range(num_v):
             if hasattr(graph, 'adj'):
@@ -282,20 +291,45 @@ def export_custom_gephi(graph, mapper, path):
                         f.write(f"{u_name},{v_name},{w},true\n")
 
 
+T = TypeVar('T')
+K = TypeVar('K')
+V = TypeVar('V')
+
+
+def or_default(value: T | None, default: T) -> T:
+    if value is None: return default
+    return value
+
+
+def process_list(cls: Type[T], data: list) -> list[T]:
+    return [from_dict(data_class=cls, data=item) for item in data]
+
+
+def process_dict(cls: Type[T], data: dict[K, list[V]]) -> dict[K, list[V]]:
+    new_dict: dict[K, list[V]] = {}
+    for key in data:
+        new_dict[key] = process_list(cls, data[key])
+
+    return new_dict
+
+
 def read(file):
-    info("Lendo {}/{}.json".format(repo, file))
-    with open("downloader/downloads/{}/{}.json".format(repo, file), 'r', encoding='utf-8') as file_content:
+    info(f"Lendo {repo}/{file}.json")
+    with open(f"downloader/downloads/{repo}/{file}.json", 'r', encoding='utf-8') as file_content:
         return json.load(file_content)
 
 
 def info(msg):
     print(f"[\033[94mINFO\033[0m] {msg}")
 
+
 def warn(msg):
     print(f"[\033[93mWARN\033[0m] {msg}")
 
+
 def error(msg):
     print(f"[\033[91mERROR\033[0m] {msg}")
+
 
 if __name__ == '__main__':
     main()
