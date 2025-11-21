@@ -6,6 +6,7 @@ from typing import TypeVar, Type
 from data_format import Issue, IssueComment, PullComment
 from dacite import from_dict
 
+from graph_lib import AbstractGraph
 from list_graph import AdjacencyListGraph
 
 """
@@ -103,7 +104,7 @@ def main():
     user_mapper = UserMapper()
 
     # Mapeia Autores de Issues (Necessário para identificar o alvo dos comentários)
-    issue_authors = {}
+    issue_authors: dict[int, int] = {}
     for issue in issues:
         user = issue.user
         if user is not None:
@@ -126,12 +127,152 @@ def main():
     num_users = user_mapper.count()
     info(f"Total de usuários únicos (Vértices): {num_users}")
 
+    # Construir um grafo integrado, no qual cada usuário é um nó e cada aresta representa uma
+    # combinação ponderada de todas as interações.
     log_weighted_graph(build_weighted_graph(user_mapper, issues, issue_comments, pulls_comments, pulls_reviews, issue_authors), user_mapper)
+
+    # Grafo 1: comentários em issues ou pull requests;
+    log_graph(comment_graph(user_mapper, issue_comments, pulls_comments, issue_authors), "comment", user_mapper)
+
+    # Grafo 2: fechamento de issue por outro usuário;
+    log_graph(closing_graph(user_mapper, issues), "closing", user_mapper)
+
+    # Grafo 3: revisões/aprovações/merges de pull requests;
+    log_graph(prs_graph(user_mapper, issues, pulls_reviews, issue_authors), "prs", user_mapper)
 
     info("Pipeline finalizado com sucesso.")
 
 
-def log_weighted_graph(data: tuple[AdjacencyListGraph, int, int, int], user_mapper):
+# noinspection DuplicatedCode
+def comment_graph(user_mapper: UserMapper, issue_comments: list[IssueComment], pulls_comments: list[PullComment],
+                  issue_authors: dict[int, int]) -> AbstractGraph:
+    num_users = user_mapper.count()
+
+    # Construção do Grafo
+    # Seleção de AdjacencyListGraph para otimização de memória em grafos esparsos
+    graph = AdjacencyListGraph(num_users)
+
+    # --- A: Processamento de Comentários em Issues ---
+    for comment in issue_comments:
+        user_obj = comment.user
+        if user_obj is None: continue
+
+        commenter_id = user_mapper.get_id(user_obj.login)
+        issue_url = comment.issue_url
+
+        try:
+            issue_number = int(issue_url.split('/')[-1])
+        except ValueError:
+            warn(f"Falha ao processar comentário de issue para [{issue_url.split('/')[-1]}] {issue_url}")
+            continue
+
+        if issue_number in issue_authors:
+            author_id = issue_authors[issue_number]
+            # Previne auto-loops (usuário comentando na própria issue)
+            if commenter_id != author_id:
+                add_interaction(graph, commenter_id, author_id)
+
+    # --- B: Processamento de Comentários em Pull Requests ---
+    for comment in pulls_comments:
+        user_obj = comment.user
+        if user_obj is None: continue
+
+        commenter_id = user_mapper.get_id(user_obj.login)
+        pr_url = comment.pull_request_url
+
+        try:
+            pr_number = int(pr_url.split('/')[-1])
+        except ValueError:
+            warn(f"Falha ao processar comentário de review para [{pr_url.split('/')[-1]}] {pr_url}")
+            continue
+
+        if pr_number in issue_authors:
+            author_id = issue_authors[pr_number]
+            if commenter_id != author_id:
+                add_interaction(graph, commenter_id, author_id)
+
+    return graph
+
+# noinspection DuplicatedCode
+def closing_graph(user_mapper: UserMapper, issues: list[Issue]) -> AbstractGraph:
+    num_users = user_mapper.count()
+
+    # Construção do Grafo
+    # Seleção de AdjacencyListGraph para otimização de memória em grafos esparsos
+    graph = AdjacencyListGraph(num_users)
+
+    # --- A: Processamento de Issues ---
+    for issue in issues:
+        author = issue.user
+        closer = issue.closed_by
+        if author is None or closer is None: continue
+
+        author_id = user_mapper.get_id(author.login)
+        closer_id = user_mapper.get_id(closer.login)
+
+        if author_id != closer_id:
+            add_interaction(graph, closer_id, author_id)
+
+    return graph
+
+# noinspection DuplicatedCode
+def prs_graph(user_mapper: UserMapper, issues: list[Issue], pulls_reviews: dict[str, list[PullComment]], issue_authors: dict[int, int]) -> AbstractGraph:
+    num_users = user_mapper.count()
+
+    # Construção do Grafo
+    # Seleção de AdjacencyListGraph para otimização de memória em grafos esparsos
+    graph = AdjacencyListGraph(num_users)
+
+    # --- A: Processamento de Reviews em Pull Requests ---
+    for pr_num_str, reviews in pulls_reviews.items():
+        pr_number = int(pr_num_str)
+
+        if pr_number not in issue_authors: continue
+        author_id = issue_authors[pr_number]
+
+        for review in reviews:
+            author = review.user
+            if author is None: continue
+
+            reviewer_id = user_mapper.get_id(author.login)
+
+            if reviewer_id != author_id:
+                add_interaction(graph, reviewer_id, author_id)
+
+    # --- B: Processamento de Comentários em Pull Requests ---
+    for issue in issues:
+        if issue.pull_request is None or issue.pull_request.merged_at is None: continue
+        author = issue.user
+        merger = issue.closed_by
+        if author is None or merger is None: continue
+
+        commenter_id = user_mapper.get_id(merger.login)
+        pr_number = issue.number
+
+        if pr_number in issue_authors:
+            author_id = user_mapper.get_id(author.login)
+            if commenter_id != author_id:
+                add_interaction(graph, commenter_id, author_id)
+
+    return graph
+
+
+def log_graph(graph: AbstractGraph, name: str, user_mapper: UserMapper):
+    # Relatório de Execução
+    print("-" * 40)
+    info(f"Grafo construído com sucesso!")
+    info(f"Vértices: {graph.getVertexCount()}")
+    info(f"Arestas: {graph.getEdgeCount()}")
+    print("-" * 40)
+
+    # 6. Exportação dos Dados
+    output_file = f"out/{name}_{repo.replace('/', '_')}.gdf"
+    info(f"Exportando para formato GDF: {output_file}...")
+
+    export_custom_gephi(graph, user_mapper, output_file)
+
+
+def log_weighted_graph(data: tuple[AbstractGraph, int, int, int], user_mapper: UserMapper):
     graph, count_comments, count_merges, count_reviews = data
 
     # Relatório de Execução
@@ -145,14 +286,18 @@ def log_weighted_graph(data: tuple[AdjacencyListGraph, int, int, int], user_mapp
     print("-" * 40)
 
     # 6. Exportação dos Dados
-    output_file = f"{repo.replace('/', '_')}.gdf"
+    output_file = f"out/weighted_{repo.replace('/', '_')}.gdf"
     info(f"Exportando para formato GDF: {output_file}...")
 
     export_custom_gephi(graph, user_mapper, output_file)
 
 
 # noinspection DuplicatedCode
-def build_weighted_graph(user_mapper: UserMapper, issues: list[Issue], issue_comments: list[IssueComment], pulls_comments: list[PullComment], pulls_reviews: dict[str, list[PullComment]], issue_authors: dict) -> tuple[AdjacencyListGraph, int, int, int]:
+def build_weighted_graph(
+        user_mapper: UserMapper, issues: list[Issue],
+        issue_comments: list[IssueComment], pulls_comments: list[PullComment],
+        pulls_reviews: dict[str, list[PullComment]], issue_authors: dict[int, int]
+) -> tuple[AbstractGraph, int, int, int]:
     num_users = user_mapper.count()
 
     # 5. Construção do Grafo
@@ -241,7 +386,8 @@ def build_weighted_graph(user_mapper: UserMapper, issues: list[Issue], issue_com
 
     return graph, count_comments, count_merges, count_reviews
 
-def add_interaction(graph, u: int, v: int, weight: float):
+
+def add_interaction(graph, u: int, v: int, weight: float = 0):
     """
     Registra uma interação entre dois usuários no grafo.
 
@@ -254,12 +400,9 @@ def add_interaction(graph, u: int, v: int, weight: float):
         v: ID do usuário de destino.
         weight: Peso da interação a ser adicionada.
     """
-    if graph.hasEdge(u, v):
-        current_weight = graph.getEdgeWeight(u, v)
-        graph.setEdgeWeight(u, v, current_weight + weight)
-    else:
-        graph.addEdge(u, v)
-        graph.setEdgeWeight(u, v, weight)
+    graph.addEdge(u, v)
+    current_weight = graph.getEdgeWeight(u, v)
+    graph.setEdgeWeight(u, v, current_weight + weight)
 
 
 def export_custom_gephi(graph, mapper, path):
@@ -269,6 +412,9 @@ def export_custom_gephi(graph, mapper, path):
     Realiza a tradução reversa de IDs numéricos para Logins do GitHub
     para permitir a análise visual legível no software Gephi.
     """
+    file = Path(path)
+    file.parent.mkdir(parents=True, exist_ok=True)
+
     with open(path, 'w', encoding='utf-8') as f:
         f.write("nodedef>name VARCHAR,label VARCHAR\n")
         num_v = graph.getVertexCount()
