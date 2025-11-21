@@ -111,14 +111,6 @@ def main():
             u_id = user_mapper.get_id(user.login)
             issue_authors[issue.number] = u_id
 
-    # Mapeia Autores de PRs
-    # pr_authors = {}
-    # for pr in pulls:
-    #     user = pr.user
-    #     if user:
-    #         u_id = user_mapper.get_id(user['login'])
-    #         pr_authors[pr['number']] = u_id
-
     # Varredura completa para registro de todos os nós (Vértices) antes da criação do grafo
     info("Mapeando espaço de usuários...")
 
@@ -131,10 +123,6 @@ def main():
     for pr_num, reviews in pulls_reviews.items():
         for r in reviews:
             if r.user is not None: user_mapper.get_id(r.user.login)
-
-    # for pr in pulls:
-    #     if pr.get('merged_by'):
-    #         user_mapper.get_id(pr['merged_by']['login'])
 
     num_users = user_mapper.count()
     info(f"Total de usuários únicos (Vértices): {num_users}")
@@ -212,7 +200,10 @@ def main():
     # Regra de Negócio: Merges representam a consolidação da colaboração (Peso 5.0)
     count_merges = 0
     for pr in issues:
-        if pr.pull_request and pr.pull_request.merged_at and pr.closed_by:
+        if (pr.pull_request is not None
+                and pr.pull_request.merged_at is not None
+                and pr.closed_by is not None
+        ):
             merger_id = user_mapper.get_id(pr.closed_by.login)
             author_id = issue_authors.get(pr.number)
 
