@@ -55,7 +55,6 @@ class UserMapper:
         return self.counter
 
 
-# noinspection DuplicatedCode
 def main():
     """
     Função de entrada principal (Entry Point).
@@ -152,6 +151,7 @@ def log_weighted_graph(data: tuple[AdjacencyListGraph, int, int, int], user_mapp
     export_custom_gephi(graph, user_mapper, output_file)
 
 
+# noinspection DuplicatedCode
 def build_weighted_graph(user_mapper: UserMapper, issues: list[Issue], issue_comments: list[IssueComment], pulls_comments: list[PullComment], pulls_reviews: dict[str, list[PullComment]], issue_authors: dict) -> tuple[AdjacencyListGraph, int, int, int]:
     num_users = user_mapper.count()
 
