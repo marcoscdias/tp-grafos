@@ -127,6 +127,34 @@ def main():
     num_users = user_mapper.count()
     info(f"Total de usuários únicos (Vértices): {num_users}")
 
+    log_weighted_graph(build_weighted_graph(user_mapper, issues, issue_comments, pulls_comments, pulls_reviews, issue_authors), user_mapper)
+
+    info("Pipeline finalizado com sucesso.")
+
+
+def log_weighted_graph(data: tuple[AdjacencyListGraph, int, int, int], user_mapper):
+    graph, count_comments, count_merges, count_reviews = data
+
+    # Relatório de Execução
+    print("-" * 40)
+    info(f"Grafo construído com sucesso!")
+    info(f"Vértices: {graph.getVertexCount()}")
+    info(f"Arestas: {graph.getEdgeCount()}")
+    print(f"  - Interações de Comentários processadas: {count_comments}")
+    print(f"  - Interações de Reviews processadas: {count_reviews}")
+    print(f"  - Interações de Merges processadas: {count_merges}")
+    print("-" * 40)
+
+    # 6. Exportação dos Dados
+    output_file = f"{repo.replace('/', '_')}.gdf"
+    info(f"Exportando para formato GDF: {output_file}...")
+
+    export_custom_gephi(graph, user_mapper, output_file)
+
+
+def build_weighted_graph(user_mapper: UserMapper, issues: list[Issue], issue_comments: list[IssueComment], pulls_comments: list[PullComment], pulls_reviews: dict[str, list[PullComment]], issue_authors: dict) -> tuple[AdjacencyListGraph, int, int, int]:
+    num_users = user_mapper.count()
+
     # 5. Construção do Grafo
     # Seleção de AdjacencyListGraph para otimização de memória em grafos esparsos
     graph = AdjacencyListGraph(num_users)
@@ -211,24 +239,7 @@ def main():
                 add_interaction(graph, merger_id, author_id, 5.0)
                 count_merges += 1
 
-    # Relatório de Execução
-    print("-" * 40)
-    info(f"Grafo construído com sucesso!")
-    info(f"Vértices: {graph.getVertexCount()}")
-    info(f"Arestas: {graph.getEdgeCount()}")
-    print(f"  - Interações de Comentários processadas: {count_comments}")
-    print(f"  - Interações de Reviews processadas: {count_reviews}")
-    print(f"  - Interações de Merges processadas: {count_merges}")
-    print("-" * 40)
-
-    # 6. Exportação dos Dados
-    output_file = f"{repo.replace('/', '_')}.gdf"
-    info(f"Exportando para formato GDF: {output_file}...")
-
-    export_custom_gephi(graph, user_mapper, output_file)
-
-    info("Pipeline finalizado com sucesso.")
-
+    return graph, count_comments, count_merges, count_reviews
 
 def add_interaction(graph, u: int, v: int, weight: float):
     """
