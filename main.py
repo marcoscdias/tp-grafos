@@ -283,10 +283,8 @@ def export_custom_gephi(graph, mapper, path):
 
 
 def read(file):
-    """Helper para leitura segura de arquivos JSON com encoding UTF-8."""
-    filename = f"downloader/downloads/{repo}/{file}.json"
-    info(f"Lendo dataset: {filename}...")
-    with open(filename, 'r', encoding='utf-8') as file_content:
+    info("Lendo {}/{}.json".format(repo, file))
+    with open("downloader/downloads/{}/{}.json".format(repo, file), 'r', encoding='utf-8') as file_content:
         return json.load(file_content)
 
 
