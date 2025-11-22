@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Optional
 
 
 @dataclass
@@ -12,8 +12,15 @@ class User:
 
 @dataclass
 class PullRequest:
-    # If present it represents it was merged, if not, and closed_at is present on Issue it was closed without merging
-    merged_at: str | None
+    id: int
+    number: int
+    state: str
+    title: str
+    user: Optional[User]
+    # If present it represents it was merged
+    merged_at: Optional[str]
+    # Graph Weight 5 (Merge)
+    merged_by: Optional[User]
 
 
 @dataclass
@@ -21,15 +28,15 @@ class Issue:
     id: int
     node_id: str
     # Is None if the account was deleted, skip if so
-    user: User | None
+    user: Optional[User]
     number: int
     title: str
     state: Literal["open", "closed"]
     comments: int
-    closed_at: str | None
+    closed_at: Optional[str]
     # If present this issue is a pull request
-    pull_request: PullRequest | None
-    closed_by: User | None
+    pull_request: Optional[dict] 
+    closed_by: Optional[User]
 
 
 @dataclass
@@ -37,15 +44,13 @@ class IssueComment:
     id: int
     node_id: str
     # Is None if the account was deleted, skip if so
-    user: User | None
+    user: Optional[User]
     issue_url: str
 
-
-# Works both for Review comments and Reviews
 @dataclass
 class PullComment:
     id: int
     node_id: str
     # Is None if the account was deleted, skip if so
-    user: User | None
+    user: Optional[User]
     pull_request_url: str

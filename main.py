@@ -20,7 +20,6 @@ para visualização no Gephi.
 
 repo = ""
 
-
 class UserMapper:
     """
     Classe utilitária responsável pelo mapeamento bidirecional entre identificadores
@@ -92,7 +91,6 @@ def main():
     try:
         issues: list[Issue] = process_list(Issue, read("issues"))
         issue_comments: list[IssueComment] = process_list(IssueComment, read("issues_comments"))
-        # pulls: list = read("pulls")
         pulls_comments: list[PullComment] = process_list(PullComment, read("pulls_comments"))
         pulls_reviews: dict[str, list[PullComment]] = process_dict(PullComment, read("pulls_reviews"))
     except FileNotFoundError as e:
@@ -123,22 +121,25 @@ def main():
     for pr_num, reviews in pulls_reviews.items():
         for r in reviews:
             if r.user is not None: user_mapper.get_id(r.user.login)
+            
+    # Mapear quem fechou issues/PRs (Merges)
+    for issue in issues:
+        if issue.closed_by is not None: user_mapper.get_id(issue.closed_by.login)
 
     num_users = user_mapper.count()
     info(f"Total de usuários únicos (Vértices): {num_users}")
 
-    # Construir um grafo integrado, no qual cada usuário é um nó e cada aresta representa uma
-    # combinação ponderada de todas as interações.
+    # Construir um grafo ponderado
     log_weighted_graph(build_weighted_graph(user_mapper, issues, issue_comments, pulls_comments, pulls_reviews, issue_authors), user_mapper)
 
     # Grafo 1: comentários em issues ou pull requests;
-    log_graph(comment_graph(user_mapper, issue_comments, pulls_comments, issue_authors), "comment", user_mapper)
+    log_graph(comment_graph(user_mapper, issue_comments, pulls_comments, issue_authors), "grafo1_comentarios", user_mapper)
 
     # Grafo 2: fechamento de issue por outro usuário;
-    log_graph(closing_graph(user_mapper, issues), "closing", user_mapper)
+    log_graph(closing_graph(user_mapper, issues), "grafo2_fechamento", user_mapper)
 
     # Grafo 3: revisões/aprovações/merges de pull requests;
-    log_graph(prs_graph(user_mapper, issues, pulls_reviews, issue_authors), "prs", user_mapper)
+    log_graph(prs_graph(user_mapper, issues, pulls_reviews, issue_authors), "grafo3_reviews_merges", user_mapper)
 
     info("Pipeline finalizado com sucesso.")
 
@@ -147,9 +148,6 @@ def main():
 def comment_graph(user_mapper: UserMapper, issue_comments: list[IssueComment], pulls_comments: list[PullComment],
                   issue_authors: dict[int, int]) -> AbstractGraph:
     num_users = user_mapper.count()
-
-    # Construção do Grafo
-    # Seleção de AdjacencyListGraph para otimização de memória em grafos esparsos
     graph = AdjacencyListGraph(num_users)
 
     # --- A: Processamento de Comentários em Issues ---
@@ -163,12 +161,10 @@ def comment_graph(user_mapper: UserMapper, issue_comments: list[IssueComment], p
         try:
             issue_number = int(issue_url.split('/')[-1])
         except ValueError:
-            warn(f"Falha ao processar comentário de issue para [{issue_url.split('/')[-1]}] {issue_url}")
             continue
 
         if issue_number in issue_authors:
             author_id = issue_authors[issue_number]
-            # Previne auto-loops (usuário comentando na própria issue)
             if commenter_id != author_id:
                 add_interaction(graph, commenter_id, author_id)
 
@@ -183,7 +179,6 @@ def comment_graph(user_mapper: UserMapper, issue_comments: list[IssueComment], p
         try:
             pr_number = int(pr_url.split('/')[-1])
         except ValueError:
-            warn(f"Falha ao processar comentário de review para [{pr_url.split('/')[-1]}] {pr_url}")
             continue
 
         if pr_number in issue_authors:
@@ -193,15 +188,13 @@ def comment_graph(user_mapper: UserMapper, issue_comments: list[IssueComment], p
 
     return graph
 
+
 # noinspection DuplicatedCode
 def closing_graph(user_mapper: UserMapper, issues: list[Issue]) -> AbstractGraph:
     num_users = user_mapper.count()
-
-    # Construção do Grafo
-    # Seleção de AdjacencyListGraph para otimização de memória em grafos esparsos
     graph = AdjacencyListGraph(num_users)
 
-    # --- A: Processamento de Issues ---
+    # --- A: Processamento de Issues (Fechamento) ---
     for issue in issues:
         author = issue.user
         closer = issue.closed_by
@@ -211,21 +204,22 @@ def closing_graph(user_mapper: UserMapper, issues: list[Issue]) -> AbstractGraph
         closer_id = user_mapper.get_id(closer.login)
 
         if author_id != closer_id:
+            # Quem fechou -> Autor
             add_interaction(graph, closer_id, author_id)
 
     return graph
 
+
 # noinspection DuplicatedCode
 def prs_graph(user_mapper: UserMapper, issues: list[Issue], pulls_reviews: dict[str, list[PullComment]], issue_authors: dict[int, int]) -> AbstractGraph:
     num_users = user_mapper.count()
-
-    # Construção do Grafo
-    # Seleção de AdjacencyListGraph para otimização de memória em grafos esparsos
     graph = AdjacencyListGraph(num_users)
 
     # --- A: Processamento de Reviews em Pull Requests ---
     for pr_num_str, reviews in pulls_reviews.items():
-        pr_number = int(pr_num_str)
+        try:
+            pr_number = int(pr_num_str)
+        except ValueError: continue
 
         if pr_number not in issue_authors: continue
         author_id = issue_authors[pr_number]
@@ -239,20 +233,22 @@ def prs_graph(user_mapper: UserMapper, issues: list[Issue], pulls_reviews: dict[
             if reviewer_id != author_id:
                 add_interaction(graph, reviewer_id, author_id)
 
-    # --- B: Processamento de Comentários em Pull Requests ---
+    # --- B: Processamento de Merges (baseado em Issues com PR e closed_by) ---
     for issue in issues:
+        # Verifica se é PR e se foi mergeado
         if issue.pull_request is None or issue.pull_request.merged_at is None: continue
+        
         author = issue.user
-        merger = issue.closed_by
+        merger = issue.closed_by # Usando closed_by como proxy para merger
         if author is None or merger is None: continue
 
-        commenter_id = user_mapper.get_id(merger.login)
+        merger_id = user_mapper.get_id(merger.login)
         pr_number = issue.number
 
         if pr_number in issue_authors:
-            author_id = user_mapper.get_id(author.login)
-            if commenter_id != author_id:
-                add_interaction(graph, commenter_id, author_id)
+            author_id = issue_authors[pr_number] # ou user_mapper.get_id(author.login)
+            if merger_id != author_id:
+                add_interaction(graph, merger_id, author_id)
 
     return graph
 
@@ -260,12 +256,12 @@ def prs_graph(user_mapper: UserMapper, issues: list[Issue], pulls_reviews: dict[
 def log_graph(graph: AbstractGraph, name: str, user_mapper: UserMapper):
     # Relatório de Execução
     print("-" * 40)
-    info(f"Grafo construído com sucesso!")
+    info(f"Grafo [{name}] construído com sucesso!")
     info(f"Vértices: {graph.getVertexCount()}")
     info(f"Arestas: {graph.getEdgeCount()}")
     print("-" * 40)
 
-    # 6. Exportação dos Dados
+    # Exportação dos Dados
     output_file = f"out/{name}_{repo.replace('/', '_')}.gdf"
     info(f"Exportando para formato GDF: {output_file}...")
 
@@ -277,7 +273,7 @@ def log_weighted_graph(data: tuple[AbstractGraph, int, int, int], user_mapper: U
 
     # Relatório de Execução
     print("-" * 40)
-    info(f"Grafo construído com sucesso!")
+    info(f"Grafo Integrado (Ponderado) construído com sucesso!")
     info(f"Vértices: {graph.getVertexCount()}")
     info(f"Arestas: {graph.getEdgeCount()}")
     print(f"  - Interações de Comentários processadas: {count_comments}")
@@ -285,7 +281,7 @@ def log_weighted_graph(data: tuple[AbstractGraph, int, int, int], user_mapper: U
     print(f"  - Interações de Merges processadas: {count_merges}")
     print("-" * 40)
 
-    # 6. Exportação dos Dados
+    # Exportação dos Dados
     output_file = f"out/weighted_{repo.replace('/', '_')}.gdf"
     info(f"Exportando para formato GDF: {output_file}...")
 
@@ -300,14 +296,12 @@ def build_weighted_graph(
 ) -> tuple[AbstractGraph, int, int, int]:
     num_users = user_mapper.count()
 
-    # 5. Construção do Grafo
-    # Seleção de AdjacencyListGraph para otimização de memória em grafos esparsos
+    # Construção do Grafo
     graph = AdjacencyListGraph(num_users)
 
     info("Processando interações e calculando pesos das arestas...")
 
-    # --- A: Processamento de Comentários em Issues ---
-    # Regra de Negócio: Comentários denotam interação leve (Peso 2.0)
+    # --- A: Processamento de Comentários em Issues (Peso 2) ---
     count_comments = 0
     for comment in issue_comments:
         user_obj = comment.user
@@ -319,18 +313,15 @@ def build_weighted_graph(
         try:
             issue_number = int(issue_url.split('/')[-1])
         except ValueError:
-            warn(f"Falha ao processar comentário de issue para [{issue_url.split('/')[-1]}] {issue_url}")
             continue
 
         if issue_number in issue_authors:
             author_id = issue_authors[issue_number]
-            # Previne auto-loops (usuário comentando na própria issue)
             if commenter_id != author_id:
                 add_interaction(graph, commenter_id, author_id, 2.0)
                 count_comments += 1
 
-    # --- B: Processamento de Comentários em Pull Requests ---
-    # Regra de Negócio: Comentários de código também possuem Peso 2.0
+    # --- B: Processamento de Comentários em Pull Requests (Peso 2) ---
     for comment in pulls_comments:
         user_obj = comment.user
         if user_obj is None: continue
@@ -341,7 +332,6 @@ def build_weighted_graph(
         try:
             pr_number = int(pr_url.split('/')[-1])
         except ValueError:
-            warn(f"Falha ao processar comentário de review para [{pr_url.split('/')[-1]}] {pr_url}")
             continue
 
         if pr_number in issue_authors:
@@ -350,11 +340,12 @@ def build_weighted_graph(
                 add_interaction(graph, commenter_id, author_id, 2.0)
                 count_comments += 1
 
-    # --- C: Processamento de Code Reviews ---
-    # Regra de Negócio: Reviews indicam colaboração técnica forte (Peso 4.0)
+    # --- C: Processamento de Code Reviews (Peso 4) ---
     count_reviews = 0
     for pr_num_str, reviews in pulls_reviews.items():
-        pr_number = int(pr_num_str)
+        try:
+            pr_number = int(pr_num_str)
+        except ValueError: continue
 
         if pr_number not in issue_authors: continue
         author_id = issue_authors[pr_number]
@@ -369,16 +360,15 @@ def build_weighted_graph(
                 add_interaction(graph, reviewer_id, author_id, 4.0)
                 count_reviews += 1
 
-    # --- D: Processamento de Merges ---
-    # Regra de Negócio: Merges representam a consolidação da colaboração (Peso 5.0)
+    # --- D: Processamento de Merges (Peso 5) ---
     count_merges = 0
-    for pr in issues:
-        if (pr.pull_request is not None
-                and pr.pull_request.merged_at is not None
-                and pr.closed_by is not None
+    for issue in issues:
+        if (issue.pull_request is not None
+                and issue.pull_request.merged_at is not None
+                and issue.closed_by is not None
         ):
-            merger_id = user_mapper.get_id(pr.closed_by.login)
-            author_id = issue_authors.get(pr.number)
+            merger_id = user_mapper.get_id(issue.closed_by.login)
+            author_id = issue_authors.get(issue.number)
 
             if author_id is not None and merger_id != author_id:
                 add_interaction(graph, merger_id, author_id, 5.0)
@@ -390,27 +380,22 @@ def build_weighted_graph(
 def add_interaction(graph, u: int, v: int, weight: float = 0):
     """
     Registra uma interação entre dois usuários no grafo.
-
-    Implementa a lógica de Grafo Integrado: se a aresta já existe
-    (interação prévia), o novo peso é somado ao atual.
-
-    Args:
-        graph: Instância de AbstractGraph.
-        u: ID do usuário de origem.
-        v: ID do usuário de destino.
-        weight: Peso da interação a ser adicionada.
+    Se a aresta já existe, soma o peso. Se não, cria com o peso informado (ou 0 se não informado e depois soma).
     """
-    graph.addEdge(u, v)
+    # Garante a existência da aresta
+    if not graph.hasEdge(u, v):
+        graph.addEdge(u, v)
+        # Se addEdge não inicializar peso, definimos explicitamente como 0 antes de somar
+        if hasattr(graph, 'setEdgeWeight'):
+            graph.setEdgeWeight(u, v, 0.0)
+            
     current_weight = graph.getEdgeWeight(u, v)
     graph.setEdgeWeight(u, v, current_weight + weight)
 
 
 def export_custom_gephi(graph, mapper, path):
     """
-    Exporta a estrutura do grafo para o formato GDF (Guess Definition File).
-
-    Realiza a tradução reversa de IDs numéricos para Logins do GitHub
-    para permitir a análise visual legível no software Gephi.
+    Exporta a estrutura do grafo para o formato GDF.
     """
     file = Path(path)
     file.parent.mkdir(parents=True, exist_ok=True)
@@ -426,11 +411,13 @@ def export_custom_gephi(graph, mapper, path):
         f.write("edgedef>node1 VARCHAR,node2 VARCHAR,weight DOUBLE,directed BOOLEAN\n")
         for u in range(num_v):
             if hasattr(graph, 'adj'):
+                # Otimização para Lista de Adjacência
                 for v, w in graph.adj[u].items():
                     u_name = mapper.get_name(u)
                     v_name = mapper.get_name(v)
                     f.write(f"{u_name},{v_name},{w},true\n")
             else:
+                # Fallback para Matriz
                 for v in range(num_v):
                     if graph.hasEdge(u, v):
                         w = graph.getEdgeWeight(u, v)
@@ -450,14 +437,13 @@ def or_default(value: T | None, default: T) -> T:
 
 
 def process_list(cls: Type[T], data: list) -> list[T]:
-    return [from_dict(data_class=cls, data=item) for item in data]
+    return [from_dict(data_class=cls, data=item, config=DACITE_CONFIG) for item in data]
 
 
 def process_dict(cls: Type[T], data: dict[K, list[V]]) -> dict[K, list[V]]:
     new_dict: dict[K, list[V]] = {}
     for key in data:
         new_dict[key] = process_list(cls, data[key])
-
     return new_dict
 
 
